@@ -498,4 +498,174 @@ with tab4:
     st.subheader("Paso 4 · Análisis con IA (LLM real)")
     texto = _texto_transcripcion()
     perfil = st.session_state.get("perfil") or _perfil_actual()
-    ncomps = len([c for c in perfil.get("competencias") or [] if c.get("nombre
+    ncomps = len([c for c in perfil.get("competencias") or [] if c.get("nombre")])
+
+    ma1, ma2, ma3 = st.columns(3)
+    ma1.metric("Transcripción", f"{len(texto):,} car.".replace(",", "."))
+    ma2.metric("Competencias del perfil", str(ncomps))
+    ma3.metric("Token HuggingFace", "✅ listo" if _token() else "❌ falta")
+
+    st.markdown("#### FASE 1 · Identificar el sesgo y reformularlo")
+    st.caption(
+        "Checklist obligatorio ANTES de analizar — marco del libro 'Sesgos "
+        "inconscientes' (Fuller, Chow y Murphy — FranklinCovey)."
+    )
+    fase1_ok = _checklist("f1", CHECKS_FASE1)
+
+    listo = bool(texto) and len(texto) >= 200 and ncomps > 0 and bool(_token()) and fase1_ok
+    if st.button(
+        "🔍 Analizar entrevista con la IA",
+        type="primary",
+        disabled=not listo,
+        use_container_width=True,
+    ):
+        with st.status(
+            "La IA está analizando la entrevista bajo el protocolo de imparcialidad…",
+            expanded=True,
+        ) as estado:
+            st.write(f"LLM: {modelo_llm} · Whisper: {modelo_whisper}")
+            try:
+                analisis = analizar_entrevista(_token(), modelo_llm, perfil, texto)
+                st.session_state["analisis"] = analisis
+                estado.update(label="Análisis completado ✅", state="complete")
+            except ValueError as e:
+                estado.update(label="No se pudo analizar", state="error")
+                st.error(str(e))
+            except Exception as e:
+                estado.update(label="No se pudo analizar", state="error")
+                st.error(f"Error inesperado: {e}")
+
+    if not _token():
+        st.warning(
+            "Falta el token de HuggingFace: pégalo en la barra lateral o "
+            "configúralo como secret (HF_TOKEN) en los ajustes de la app."
+        )
+    if texto and len(texto) < 200:
+        st.warning("La transcripción es demasiado corta: se necesitan al menos 200 caracteres.")
+    if ncomps == 0:
+        st.warning("Define al menos una competencia en el Paso 1.")
+
+    if st.session_state.get("analisis"):
+        st.divider()
+        _renderizar_analisis(st.session_state["analisis"])
+
+    with st.expander("¿Qué protocolo aplica la IA al analizar?"):
+        st.markdown(MARCO_SESGOS)
+        st.markdown(
+            "- Evalúa cada competencia de forma independiente con evidencia textual "
+            "a favor y en contra (anti halo y anti confirmación).\n"
+            "- Pondera toda la transcripción por igual (anti primacía y recencia).\n"
+            "- Compara solo contra el perfil del puesto (anti contraste y afinidad).\n"
+            "- No predice desempeño futuro; declara la confianza de la evidencia.\n"
+            "- Si detecta sesgos del ENTREVISTADOR en la conversación, los reporta en riesgos."
+        )
+
+# ============== PASO 5 · DECISIÓN HUMANA E INFORME (FASES 2 Y 3) ==============
+
+with tab5:
+    st.subheader("Paso 5 · Decisión humana e informe")
+
+    analisis = st.session_state.get("analisis") or {}
+    if not analisis:
+        st.info("Completa el Paso 4: la IA debe analizar la entrevista antes de registrar la decisión.")
+
+    st.markdown("#### FASE 2 · Cultivar la conexión")
+    st.caption(
+        "Del libro 'Sesgos inconscientes' (FranklinCovey): la empatía reduce el "
+        "sesgo. Marca antes de decidir."
+    )
+    fase2_ok = _checklist("f2", CHECKS_FASE2)
+
+    st.markdown("#### FASE 3 · Elegir el coraje")
+    st.caption("Autorevisión final: el coraje de reconocer y corregir tu propio sesgo.")
+    fase3_ok = _checklist("f3", CHECKS_FASE3)
+    chk_debias = st.checkbox(
+        "DECLARACIÓN FINAL: apliqué las 3 fases del protocolo (identificar y "
+        "reformular el sesgo, cultivar la conexión y elegir el coraje) y baso mi "
+        "decisión en la evidencia de la transcripción, no en impresiones.",
+        key="chk_debias",
+    )
+
+    st.markdown("##### Decisión del reclutador/a (human-in-the-loop)")
+    decision = st.radio(
+        "Tu decisión",
+        ["(Pendiente)", "Avanzar a siguiente etapa", "Contratar", "Descartar", "Requiere más evidencia"],
+        index=0,
+        horizontal=True,
+    )
+    justificacion = st.text_area(
+        "Justificación humana (muy recomendable: queda en el informe)",
+        key="in_justificacion",
+        height=90,
+    )
+    colE, colV = st.columns(2)
+    entrevistador = colE.text_input("Nombre del entrevistador/a o reclutador R.H.", key="in_entrevistador")
+    entrevistado = colV.text_input("Nombre del entrevistado/a", key="in_entrevistado")
+
+    info_audio = st.session_state.get("info_audio") or {}
+    metadatos = {
+        "empresa": (st.session_state.get("empresa_nombre") or "").strip(),
+        "entrevistador": (entrevistador or "").strip(),
+        "entrevistado": (entrevistado or "").strip(),
+        "duracion_min": _duracion_txt(info_audio),
+        "idioma": str(info_audio.get("idioma") or "-"),
+        "modelo_whisper": modelo_whisper,
+        "modelo_llm": analisis.get("modelo") or modelo_llm,
+        "fecha": datetime.now().strftime("%d/%m/%Y %H:%M"),
+        "con_foto": bool(st.session_state.get("foto")),
+    }
+    decision_humana = {
+        "decision": decision,
+        "justificacion": (justificacion or "").strip(),
+        "responsable": (entrevistador or "").strip(),
+    }
+
+    with st.expander("Ver las 3 cajas del encabezado del informe"):
+        st.markdown(f"- **Nombre de la empresa:** {metadatos['empresa'] or '(en blanco para completar a mano)'}")
+        st.markdown(f"- **Nombre del entrevistador/a R.H.:** {metadatos['entrevistador'] or '(en blanco para completar a mano)'}")
+        st.markdown(f"- **Nombre del entrevistado/a:** {metadatos['entrevistado'] or '(en blanco para completar a mano)'}")
+    if not justificacion.strip() and analisis:
+        st.caption("💡 Escribe tu justificación humana: es la parte más valiosa del expediente.")
+
+    st.divider()
+    protocolo_ok = fase2_ok and fase3_ok and chk_debias
+    if analisis and not protocolo_ok:
+        st.info("🔒 Para desbloquear los informes, completa las FASES 2 y 3 con su declaración final.")
+    elif not analisis:
+        st.info("⏳ Genera primero el análisis en el Paso 4.")
+    else:
+        st.success("✅ Protocolo de imparcialidad completo: los informes están habilitados.")
+        try:
+            pdf_bytes = generar_reporte_pdf(perfil, metadatos, analisis, decision_humana)
+            md_texto = generar_reporte_md(perfil, metadatos, analisis, decision_humana)
+            nombre_archivo = f"informe_seleccion_{_slug(metadatos['entrevistado'] or perfil.get('cargo', ''))}"
+            b1, b2, b3 = st.columns(3)
+            b1.download_button(
+                "📄 Descargar informe PDF",
+                data=pdf_bytes,
+                file_name=f"{nombre_archivo}.pdf",
+                mime="application/pdf",
+                use_container_width=True,
+            )
+            b2.download_button(
+                "📝 Descargar informe Markdown",
+                data=md_texto.encode("utf-8"),
+                file_name=f"{nombre_archivo}.md",
+                mime="text/markdown",
+                use_container_width=True,
+            )
+            b3.download_button(
+                "🗒️ Descargar informe TXT",
+                data=md_texto.encode("utf-8"),
+                file_name=f"{nombre_archivo}.txt",
+                mime="text/plain",
+                use_container_width=True,
+            )
+        except Exception as e:
+            st.error(f"No se pudo generar el informe: {e}")
+
+st.divider()
+st.caption(
+    f"{CREDITO_DISENO} · Informe de 9 secciones con firma del entrevistador/a R.H. · "
+    "La IA apoya la decisión; no la toma."
+)
